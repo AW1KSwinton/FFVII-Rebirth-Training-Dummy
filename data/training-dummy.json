@@ -1,0 +1,88 @@
+{
+  // Three Combat Simulator courses (DPS, Tank, Heal), each one round against
+  // one dummy. New rows are clones of vanilla rows with only the listed
+  // properties changed; a row without "cloneFrom" repurposes a vanilla row.
+  //
+  // Live findings that shape this file (see docs/HOW-IT-WORKS.md):
+  // - Adding even one EnemyTerritory row breaks every simulator battle, so
+  //   the three courses share one repurposed territory: an unused Gilgamesh
+  //   battle-test row nothing references. The runtime mod tells the courses
+  //   apart by the course title shown in the simulator.
+  // - New BattleCharaSpec rows crash the game on load, and a mob template
+  //   must name an actor placed in the VR level, so the dummy is the
+  //   simulator's own Ogre mob template; the runtime mod makes it
+  //   unkillable/harmless and holds the Heal course's patients at 1 HP.
+  "tables": [
+    {
+      // Enemy max HP = EnemyParameter "Enemy_<level>" HPMax x the spec's HP%
+      // (the Ogre is 200%). No vanilla territory uses a level above 70, so
+      // Enemy_99 is repurposed: level 50's stats with a huge HP pool. The
+      // dummy spawns at level 99: 500,000 x 2 = 1,000,000 HP, so with the
+      // runtime refill at 90% even a 99,999 hit cannot defeat it.
+      // (Special status type 77, HPMaxCoefficient, was tried first: it
+      // applies to the dummy but does not change its max HP.)
+      "asset": "DataObject/Resident/EnemyParameter.uasset",
+      "rows": [
+        { "name": "Enemy_99",
+          "set": { "BPMax": "100", "Strength": "136", "Magic": "136", "Vitality": "40", "Spilit": "40", "HPMax": "500000" } }
+      ]
+    },
+    {
+      "asset": "DataObject/Resident/EnemyTerritory.uasset",
+      "rows": [
+        { "name": "terVR_COL30_SUMMON_Gilgamesh_010_BtlTest_Hard",
+          "set": { "FieldAINameList_Array": ["Stay"], "MobTemplateList_Array": ["mobcolvr_EN2211_01_Ogre_OrcEnd2_00"],
+                   "MinPopList_Array": ["1"], "MaxPopList_Array": ["1"], "MobLevelList_Array": ["99"],
+                   "SummonConditionID": "" } }
+      ]
+    },
+    {
+      "asset": "DataObject/Resident/EnemyTerritoryLevel.uasset",
+      "rows": [
+        { "name": "terVR_COL30_SUMMON_Gilgamesh_010_BtlTest_Hard", "cloneFrom": "terVR_COL11_TutorialBtl_01_010",
+          "set": { "BattleInStateTrigger_Array": ["trgCmn_colosseum_battleIn"] } }
+      ]
+    },
+    {
+      "asset": "DataObject/Resident/ColosseumPositionData.uasset",
+      "rows": [
+        { "name": "POS_TD_TrainingDummy_010", "cloneFrom": "POS_COL30_Sum_00_010", "set": {} }
+      ]
+    },
+    {
+      "asset": "DataObject/Resident/Colosseum.uasset",
+      "rows": [
+        { "name": "COL99_TrainingDummy_DPS_vr", "cloneFrom": "COL30_GRASA_01_Free_vr",
+          "set": { "EnemyTerritoryID_Array": ["terVR_COL30_SUMMON_Gilgamesh_010_BtlTest_Hard"], "BattleScenePosDataID_Array": ["POS_TD_TrainingDummy_010"],
+                   "UserBattleInSequencerNames_Array": ["CSA_VrCoBattleIn_Common"], "BattleMax": "1",
+                   "DisplayFlagID_Array": ["stf1210_CHOFA_VROpen_Gras"], "OpenFlagID_Array": ["stf1210_CHOFA_VROpen_Gras"],
+                   "OpenConditionClearCheckID": "", "OpenConditionTextID": "", "OpenConditionClearCheckID01": "", "OpenConditionTextID01": "",
+                   "PreNotifyActionOrActionGroupID": "", "CourseSelectStateTriggerID": "",
+                   "RewardID": "", "ClearFlagID": "", "PlayLogClearFlagID": "",
+                   "ItemName": "$menu_Colosseum_CourseTitle_COL99_TrainingDummy_DPS", "DisplayItemName": "$menu_Colosseum_CourseTitle_COL99_TrainingDummy_DPS",
+                   "FlavorTextID": "$menu_Colosseum_CourseFlavor_COL99_TrainingDummy_DPS", "DisplayFlavorItemName": "$menu_Colosseum_CourseFlavor_COL99_TrainingDummy_DPS",
+                   "TabCategory": "7", "TimerSaveArrayIndex": "196", "DifficultyHardChangeToNormal": "1" } },
+        { "name": "COL99_TrainingDummy_Tank_vr", "cloneFrom": "COL30_GRASA_01_Free_vr",
+          "set": { "EnemyTerritoryID_Array": ["terVR_COL30_SUMMON_Gilgamesh_010_BtlTest_Hard"], "BattleScenePosDataID_Array": ["POS_TD_TrainingDummy_010"],
+                   "UserBattleInSequencerNames_Array": ["CSA_VrCoBattleIn_Common"], "BattleMax": "1",
+                   "DisplayFlagID_Array": ["stf1210_CHOFA_VROpen_Gras"], "OpenFlagID_Array": ["stf1210_CHOFA_VROpen_Gras"],
+                   "OpenConditionClearCheckID": "", "OpenConditionTextID": "", "OpenConditionClearCheckID01": "", "OpenConditionTextID01": "",
+                   "PreNotifyActionOrActionGroupID": "", "CourseSelectStateTriggerID": "",
+                   "RewardID": "", "ClearFlagID": "", "PlayLogClearFlagID": "",
+                   "ItemName": "$menu_Colosseum_CourseTitle_COL99_TrainingDummy_Tank", "DisplayItemName": "$menu_Colosseum_CourseTitle_COL99_TrainingDummy_Tank",
+                   "FlavorTextID": "$menu_Colosseum_CourseFlavor_COL99_TrainingDummy_Tank", "DisplayFlavorItemName": "$menu_Colosseum_CourseFlavor_COL99_TrainingDummy_Tank",
+                   "TabCategory": "7", "TimerSaveArrayIndex": "197", "DifficultyHardChangeToNormal": "1" } },
+        { "name": "COL99_TrainingDummy_Heal_vr", "cloneFrom": "COL30_GRASA_01_Free_vr",
+          "set": { "EnemyTerritoryID_Array": ["terVR_COL30_SUMMON_Gilgamesh_010_BtlTest_Hard"], "BattleScenePosDataID_Array": ["POS_TD_TrainingDummy_010"],
+                   "UserBattleInSequencerNames_Array": ["CSA_VrCoBattleIn_Common"], "BattleMax": "1",
+                   "DisplayFlagID_Array": ["stf1210_CHOFA_VROpen_Gras"], "OpenFlagID_Array": ["stf1210_CHOFA_VROpen_Gras"],
+                   "OpenConditionClearCheckID": "", "OpenConditionTextID": "", "OpenConditionClearCheckID01": "", "OpenConditionTextID01": "",
+                   "PreNotifyActionOrActionGroupID": "", "CourseSelectStateTriggerID": "",
+                   "RewardID": "", "ClearFlagID": "", "PlayLogClearFlagID": "",
+                   "ItemName": "$menu_Colosseum_CourseTitle_COL99_TrainingDummy_Heal", "DisplayItemName": "$menu_Colosseum_CourseTitle_COL99_TrainingDummy_Heal",
+                   "FlavorTextID": "$menu_Colosseum_CourseFlavor_COL99_TrainingDummy_Heal", "DisplayFlavorItemName": "$menu_Colosseum_CourseFlavor_COL99_TrainingDummy_Heal",
+                   "TabCategory": "7", "TimerSaveArrayIndex": "198", "DifficultyHardChangeToNormal": "1" } }
+      ]
+    }
+  ]
+}
