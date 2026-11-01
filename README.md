@@ -48,22 +48,24 @@ game files.
    (`-Mode Uninstall` and `-Mode Status` also exist). Needs the .NET 8 SDK
    and UnrealReZen.
 
-The courses are described in `data/training-dummy.json`; the builder
-(`tools/DataBuilder`) can add rows to any DataObject table, which the parser
-it builds on cannot do by itself.
+The courses are described in `data/training-dummy.json`. The builder
+(`tools/DataBuilder`) is our own reader and writer for DataObject tables, with no
+third-party dependencies. It can add rows to any table and repurpose existing
+rows. `roundtrip <folder>` re-saves every table under a folder and checks the
+bytes: it reproduces 1,725 of the game's DataObject tables byte for byte, and
+the other 5 with identical rows. `compare <a> <b>` compares two tables row by
+row.
 
 Tests: `python -m pip install lupa`, then `python tests/run_tests.py`.
 
 ## Credits
 
-- FF7R2 DataObject parser — LordGregory (CC BY-NC 4.0, NuGet dependency)
-- FF7 Rebirth Data Object Editor view models — Yoraiz0r (MIT, in `tools/DataBuilder/ThirdParty`)
 - CityHash64 — Google (MIT, ported)
+- LordGregory's FF7R2 DataObject parser and Yoraiz0r's FF7 Rebirth Data Object
+  Editor, which the first version was built with
 - UE4SS, UnrealReZen, FModel and the OpenFF7R community
 - NSK01's VR Simulator Overhaul, for showing the simulator is data-driven
 
 ## Licence
 
-MIT for this project's own code (see `LICENSE`). Third-party code keeps its
-own licence. The parser dependency is non-commercial (CC BY-NC 4.0), so builds
-that use it are for non-commercial use.
+MIT (see `LICENSE`). The ported CityHash64 keeps Google's MIT notice.

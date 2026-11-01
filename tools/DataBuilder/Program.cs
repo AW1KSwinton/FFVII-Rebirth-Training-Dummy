@@ -1,23 +1,21 @@
 // Training Dummy data builder.
 //
 // Adds new rows to FF7 Rebirth DataObject tables by cloning an existing row
-// and overriding named properties, as described by a JSON spec. Existing rows
-// are never changed. Every output is reloaded and checked before the command
-// reports success.
+// and overriding named properties, as described by a JSON spec, and can
+// repurpose an existing row. Other rows are never changed. Every output is
+// reloaded and checked before the command reports success.
 //
-//   TrainingDummy.DataBuilder build  <spec.json> <vanilla-root> <output-root>
-//   TrainingDummy.DataBuilder export <input.uasset> <output.csv>
+//   TrainingDummy.DataBuilder build     <spec.json> <vanilla-root> <output-root>
+//   TrainingDummy.DataBuilder export    <input.uasset> <output.csv>
+//   TrainingDummy.DataBuilder roundtrip <folder>        re-save every DataObject table and compare bytes
+//   TrainingDummy.DataBuilder compare   <a.uasset> <b.uasset>   compare two tables row by row
 //
 // <vanilla-root> and <output-root> are content roots containing
 // End/Content/<asset path>, the layout UnrealReZen packs from.
-using System.Reflection;
+using System.Buffers.Binary;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
-using CUE4Parse.UE4.Objects.UObject;
-using FF7R2.DataObject;
-using FF7R2.DataObject.Properties;
-using FF7RebirthDataObjectEditor;
-using FF7RebirthDataObjectEditor.FF7Types;
 using TrainingDummy.DataBuilder;
 
 return Builder.Run(args);
@@ -30,7 +28,10 @@ internal static class Builder
         {
             if (args.Length == 4 && args[0] == "build") return Build(args[1], args[2], args[3]);
             if (args.Length == 3 && args[0] == "export") { Export(args[1], args[2]); return 0; }
-            Console.Error.WriteLine("usage: build <spec.json> <vanilla-root> <output-root> | export <input.uasset> <output.csv>");
+            if (args.Length == 2 && args[0] == "roundtrip") return RoundTrip(args[1]);
+            if (args.Length == 3 && args[0] == "compare") return Compare(args[1], args[2]);
+            Console.Error.WriteLine("usage: build <spec.json> <vanilla-root> <output-root> | export <input.uasset> <output.csv>"
+                + " | roundtrip <folder> | compare <a.uasset> <b.uasset>");
             return 2;
         }
         catch (Exception ex)
@@ -45,195 +46,222 @@ internal static class Builder
         var spec = JsonSerializer.Deserialize<Spec>(File.ReadAllText(specPath),
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip })
             ?? throw new InvalidDataException("spec is empty");
-        foreach (var table in spec.Tables)
+        foreach (var tableSpec in spec.Tables)
         {
-            var input = Path.Combine(vanillaRoot, "End", "Content", table.Asset);
-            var output = Path.Combine(outputRoot, "End", "Content", table.Asset);
+            var input = Path.Combine(vanillaRoot, "End", "Content", tableSpec.Asset);
+            var output = Path.Combine(outputRoot, "End", "Content", tableSpec.Asset);
             if (Path.GetFullPath(input).Equals(Path.GetFullPath(output), StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException($"{table.Asset}: output must not overwrite the vanilla asset");
+                throw new InvalidOperationException($"{tableSpec.Asset}: output must not overwrite the vanilla asset");
             Directory.CreateDirectory(Path.GetDirectoryName(output));
 
-            var asset = IoStoreAsset.Load(input);
-            var originalCount = asset.innerAsset.frozenObject.DataTable.Count;
-            var views = new List<RowPropertiesViewModel>();
-            foreach (var row in table.Rows)
-                views.Add(row.CloneFrom == null ? Modify(asset, row) : AddClone(asset, row));
-            FixFNames(asset, views);
-            RowMap.Save(asset, output);
+            var table = DataTable.Load(input);
+            var originalCount = table.Entries.Count;
+            foreach (var row in tableSpec.Rows)
+            {
+                if (row.CloneFrom == null) Modify(table, row);
+                else AddClone(table, row);
+            }
+            table.Save(output);
 
-            Verify(input, output, originalCount, table.Rows);
-            var addedCount = table.Rows.Count(r => r.CloneFrom != null);
-            Console.WriteLine($"{table.Asset}: {originalCount} vanilla rows + {addedCount} new, "
-                + $"{table.Rows.Count - addedCount} repurposed -> {output}");
+            Verify(input, output, originalCount, tableSpec.Rows);
+            var addedCount = tableSpec.Rows.Count(r => r.CloneFrom != null);
+            Console.WriteLine($"{tableSpec.Asset}: {originalCount} vanilla rows + {addedCount} new, "
+                + $"{tableSpec.Rows.Count - addedCount} repurposed -> {output}");
         }
         return 0;
     }
 
-    static RowPropertiesViewModel AddClone(IoStoreAsset asset, RowSpec row)
+    static void AddClone(DataTable table, RowSpec row)
     {
-        var frozen = asset.innerAsset.frozenObject;
-        if (frozen.DataTable.Keys.Any(k => k.ToString() == row.Name))
-            throw new InvalidDataException($"row {row.Name} already exists");
-        var source = frozen.DataTable.FirstOrDefault(kv => kv.Key.ToString() == row.CloneFrom).Value
-            ?? throw new InvalidDataException($"clone source {row.CloneFrom} not found");
-
-        var clone = new Entry(frozen, source.properties);
-        clone.propertyValues.Clear();
-        foreach (var value in source.propertyValues)
-            clone.propertyValues.Add(Copy(frozen, value));
-
-        var view = new RowPropertiesViewModel(clone);
-        Apply(view, row);
-        RowMap.Append(frozen, asset.AddFName(row.Name), clone);
-        return view;
+        if (table.RowIndex(row.Name) >= 0) throw new InvalidDataException($"row {row.Name} already exists");
+        var source = table.RowIndex(row.CloneFrom);
+        if (source < 0) throw new InvalidDataException($"clone source {row.CloneFrom} not found");
+        var entry = table.Entries[source].Select(Copy).ToArray();
+        Apply(table, entry, row);
+        table.AppendRow(table.NameFor(row.Name), entry);
     }
 
     // Repurposes an existing row (no cloneFrom): some tables, EnemyTerritory
     // among them, break every simulator battle when a row is added, so the
     // mod reuses an unused vanilla row there instead.
-    static RowPropertiesViewModel Modify(IoStoreAsset asset, RowSpec row)
+    static void Modify(DataTable table, RowSpec row)
     {
-        var entry = asset.innerAsset.frozenObject.DataTable.FirstOrDefault(kv => kv.Key.ToString() == row.Name).Value
-            ?? throw new InvalidDataException($"row {row.Name} to repurpose not found");
-        var view = new RowPropertiesViewModel(entry);
-        Apply(view, row);
-        return view;
+        var index = table.RowIndex(row.Name);
+        if (index < 0) throw new InvalidDataException($"row {row.Name} to repurpose not found");
+        Apply(table, table.Entries[index], row);
     }
 
-    static void Apply(RowPropertiesViewModel view, RowSpec row)
+    static void Apply(DataTable table, Value[] entry, RowSpec row)
     {
         foreach (var (name, wanted) in row.Set)
         {
-            var property = view.Properties.SingleOrDefault(p => p.Name == name)
-                ?? throw new InvalidDataException($"{row.Name}: no property {name}");
-            if (property is ArrayPropertyViewModel array)
+            var i = PropertyIndex(table, row.Name, name);
+            var property = table.Properties[i];
+            if (property.IsArray)
             {
-                var values = wanted.ValueKind == JsonValueKind.Array
-                    ? wanted.EnumerateArray().Select(v => v.ToString()).ToList()
-                    : throw new InvalidDataException($"{row.Name}.{name} is an array; give a JSON array");
-                while (array.Children.Count > 0) array.RemoveAt(array.Children.Count - 1);
-                for (var i = 0; i < values.Count; i++)
-                    array.InsertAt(i, array.CreatePropertyValue()).Value = values[i];
+                if (wanted.ValueKind != JsonValueKind.Array) throw new InvalidDataException($"{row.Name}.{name} is an array; give a JSON array");
+                var items = wanted.EnumerateArray().Select(v => Parse(table, property.Type, v.ToString())).ToList();
+                entry[i] = new ArrayValue(items, items.Count);
             }
             else
             {
-                if (wanted.ValueKind == JsonValueKind.Array)
-                    throw new InvalidDataException($"{row.Name}.{name} is not an array");
-                property.Value = wanted.ToString();
+                if (wanted.ValueKind == JsonValueKind.Array) throw new InvalidDataException($"{row.Name}.{name} is not an array");
+                entry[i] = Parse(table, property.Type, wanted.ToString());
             }
         }
     }
 
-    // A deep copy of a parsed value: same property descriptor, new storage.
-    // An array's descriptor creates elements, so the array itself is built
-    // directly and each element is copied.
-    static PropertyValue Copy(FrozenObject frozen, PropertyValue source)
+    static int PropertyIndex(DataTable table, string row, string name)
     {
-        if (source is ArrayProperty sourceArray)
-        {
-            var target = new ArrayProperty(frozen, source.property);
-            target.Data.Clear();
-            foreach (var child in sourceArray.Data) target.Data.Add(Copy(frozen, child));
-            return target;
-        }
-        var copy = source.property.Create();
-        var data = copy.GetType().GetProperty("Data", BindingFlags.Public | BindingFlags.Instance)
-            ?? throw new InvalidDataException($"{source.property.name}: value has no Data");
-        data.SetValue(copy, data.GetValue(source));
-        return copy;
+        var index = table.Properties.FindIndex(p => table.NameText(p.Name) == name);
+        return index >= 0 ? index : throw new InvalidDataException($"{row}: no property {name}");
     }
 
-    // Names typed into new rows must exist in the package's name map; the
-    // logic follows Yoraiz0r's editor (Utils.FixFNames), restricted to the
-    // rows this tool created.
-    static void FixFNames(IoStoreAsset asset, IEnumerable<RowPropertiesViewModel> views)
+    static Value Copy(Value value) => value is ArrayValue a ? new ArrayValue([.. a.Items], a.Max) : value;
+
+    /// <summary>A value from spec text. An empty name is None; a string gets its terminator.</summary>
+    static Value Parse(DataTable table, int type, string text)
     {
-        var names = asset.innerAsset.frozenObject.NameToOffsetLookup.Keys.ToList();
-        foreach (var prop in views.SelectMany(v => Flatten(v.Properties)).OfType<NamePropertyViewModel>())
+        var inv = CultureInfo.InvariantCulture;
+        byte[] Le(long v, int size) { var b = new byte[8]; BinaryPrimitives.WriteInt64LittleEndian(b, v); return b[..size]; }
+        long Integer(string s) => s.ToLowerInvariant() switch { "true" => 1, "false" => 0, _ => long.Parse(s, inv) };
+        switch (type)
         {
-            var wanted = prop.UserText;
-            if (wanted == null) continue;
-            var match = names.Cast<FName?>().FirstOrDefault(n => n.Value.ToString() == wanted);
-            if (match == null)
-            {
-                match = asset.AddFName(wanted);
-                names.Add(match.Value);
-            }
-            prop.Data = match;
+            case DataTable.StringType: return new StringValue(text + "\0", text.Length + 1);
+            case DataTable.NameType: return new NameValue(text.Length == 0 ? null : table.NameFor(text));
+            case 9:
+                var f = new byte[4]; BinaryPrimitives.WriteSingleLittleEndian(f, float.Parse(text, inv)); return new ScalarValue(f);
+            default:
+                var size = DataTable.SizeOf(type);
+                var value = Integer(text);
+                var bits = 8 * size;
+                if (size < 8 && (value < -(1L << (bits - 1)) || value >= 1L << bits)) throw new InvalidDataException($"{text} does not fit {size} bytes");
+                return new ScalarValue(Le(value, size));
         }
     }
 
-    static IEnumerable<IPropertyViewModel> Flatten(IEnumerable<IPropertyViewModel> roots)
+    /// <summary>A value as text, the inverse of <see cref="Parse"/>.</summary>
+    static string Format(DataTable table, int type, Value value) => value switch
     {
-        foreach (var p in roots)
+        StringValue s => s.Text == null ? "" : s.Text.TrimEnd('\0'),
+        NameValue n => n.Name is { } name ? table.NameText(name) : "",
+        ScalarValue v when type == 9 => BinaryPrimitives.ReadSingleLittleEndian(v.Bytes).ToString("R", CultureInfo.InvariantCulture),
+        ScalarValue v => v.Bytes.Length switch
         {
-            yield return p;
-            foreach (var c in Flatten(p.Children)) yield return c;
-        }
-    }
+            1 => v.Bytes[0].ToString(CultureInfo.InvariantCulture),
+            2 => BinaryPrimitives.ReadInt16LittleEndian(v.Bytes).ToString(CultureInfo.InvariantCulture),
+            4 => BinaryPrimitives.ReadInt32LittleEndian(v.Bytes).ToString(CultureInfo.InvariantCulture),
+            _ => BinaryPrimitives.ReadInt64LittleEndian(v.Bytes).ToString(CultureInfo.InvariantCulture),
+        },
+        ArrayValue a => string.Join("|", a.Items.Select(i => Format(table, type, i))),
+        _ => throw new InvalidDataException("unknown value"),
+    };
 
     static void Verify(string input, string output, int originalCount, List<RowSpec> rows)
     {
-        var asset = IoStoreAsset.Load(output);
-        var table = asset.innerAsset.frozenObject.DataTable;
+        var table = DataTable.Load(output);
         var expectedCount = originalCount + rows.Count(r => r.CloneFrom != null);
-        if (table.Count != expectedCount)
-            throw new InvalidDataException($"{output}: expected {expectedCount} rows, found {table.Count}");
+        if (table.Entries.Count != expectedCount)
+            throw new InvalidDataException($"{output}: expected {expectedCount} rows, found {table.Entries.Count}");
+        table.CheckBuckets();
         // Every vanilla row the spec does not repurpose must read back exactly as in the vanilla asset.
         var repurposed = rows.Where(r => r.CloneFrom == null).Select(r => r.Name).ToHashSet();
-        var vanilla = IoStoreAsset.Load(input).innerAsset.frozenObject.DataTable;
-        foreach (var (key, entry) in vanilla)
+        var vanilla = DataTable.Load(input);
+        for (var i = 0; i < vanilla.Entries.Count; i++)
         {
-            var written = table.FirstOrDefault(kv => kv.Key.ToString() == key.ToString()).Value
-                ?? throw new InvalidDataException($"{output}: vanilla row {key} missing");
-            if (!repurposed.Contains(key.ToString()) && Flat(entry) != Flat(written))
-                throw new InvalidDataException($"{output}: vanilla row {key} changed");
+            var name = vanilla.NameText(vanilla.Keys[i].Name);
+            if (table.NameText(table.Keys[i].Name) != name) throw new InvalidDataException($"{output}: vanilla row {name} moved");
+            if (!repurposed.Contains(name) && Row(vanilla, i) != Row(table, i))
+                throw new InvalidDataException($"{output}: vanilla row {name} changed");
         }
         foreach (var row in rows)
         {
-            var entry = table.FirstOrDefault(kv => kv.Key.ToString() == row.Name).Value
-                ?? throw new InvalidDataException($"{output}: new row {row.Name} missing after reload");
-            var view = new RowPropertiesViewModel(entry);
+            var index = table.RowIndex(row.Name);
+            if (index < 0) throw new InvalidDataException($"{output}: row {row.Name} missing after reload");
             foreach (var (name, wanted) in row.Set)
             {
-                var property = view.Properties.Single(p => p.Name == name);
-                var actual = property is ArrayPropertyViewModel
-                    ? string.Join("|", property.Children.Select(c => c.Value))
-                    : property.Value;
-                var expected = wanted.ValueKind == JsonValueKind.Array
-                    ? string.Join("|", wanted.EnumerateArray().Select(v => v.ToString()))
-                    : wanted.ToString();
-                if (!Same(actual, expected))
-                    throw new InvalidDataException($"{row.Name}.{name}: wrote '{expected}', read back '{actual}'");
+                var i = PropertyIndex(table, row.Name, name);
+                var actual = Format(table, table.Properties[i].Type, table.Entries[index][i]);
+                var expected = wanted.ValueKind == JsonValueKind.Array ? string.Join("|", wanted.EnumerateArray().Select(v => v.ToString())) : wanted.ToString();
+                if (!Same(actual, expected)) throw new InvalidDataException($"{row.Name}.{name}: wrote '{expected}', read back '{actual}'");
             }
         }
     }
 
-    static string Flat(Entry entry) => string.Join("\u001f", new RowPropertiesViewModel(entry).Properties.Select(p =>
-        p.Name + "=" + (p is ArrayPropertyViewModel ? string.Join("|", p.Children.Select(c => c.Value)) : p.Value)));
+    /// <summary>A row as text: each property and its value, in record order.</summary>
+    static string Row(DataTable table, int index) => string.Join("\u001f", table.Properties.Select((p, i) =>
+        table.NameText(p.Name) + "=" + Format(table, p.Type, table.Entries[index][i])));
 
     static bool Same(string actual, string expected)
     {
         if ((actual ?? "") == (expected ?? "")) return true;
-        return double.TryParse(actual, out var a) && double.TryParse(expected, out var e) && a == e;
+        return double.TryParse(actual, CultureInfo.InvariantCulture, out var a) && double.TryParse(expected, CultureInfo.InvariantCulture, out var e) && a == e;
     }
 
     static void Export(string input, string output)
     {
-        var asset = IoStoreAsset.Load(input);
+        var table = DataTable.Load(input);
         var sb = new StringBuilder("Index,Name,Property,Value\n");
-        var index = 0;
-        foreach (var (key, entry) in asset.innerAsset.frozenObject.DataTable)
-        {
-            foreach (var p in new RowPropertiesViewModel(entry).Properties)
-            {
-                var value = p is ArrayPropertyViewModel ? string.Join("|", p.Children.Select(c => c.Value)) : p.Value;
-                sb.Append(index).Append(',').Append(key).Append(',').Append(p.Name).Append(",\"")
-                  .Append((value ?? "").Replace("\"", "\"\"")).Append("\"\n");
-            }
-            index++;
-        }
+        for (var r = 0; r < table.Entries.Count; r++)
+            for (var i = 0; i < table.Properties.Count; i++)
+                sb.Append(r).Append(',').Append(table.NameText(table.Keys[r].Name)).Append(',').Append(table.NameText(table.Properties[i].Name))
+                  .Append(",\"").Append(Format(table, table.Properties[i].Type, table.Entries[r][i]).Replace("\"", "\"\"")).Append("\"\n");
         File.WriteAllText(output, sb.ToString());
+    }
+
+    // Re-saves every DataObject table under a folder without changes. A table that is not
+    // byte-identical must at least read back with the same rows.
+    static int RoundTrip(string folder)
+    {
+        int identical = 0, equivalent = 0, skipped = 0, failed = 0;
+        foreach (var path in Directory.EnumerateFiles(folder, "*.uasset", SearchOption.AllDirectories).Order())
+        {
+            byte[] original = File.ReadAllBytes(path);
+            DataTable table;
+            try
+            {
+                var package = ZenPackage.Parse(original, path);
+                if (!package.Names.Contains("/Script/EndDataObject")) { skipped++; continue; }
+                table = DataTable.Read(package, path);
+            }
+            catch (Exception ex) when (ex is InvalidDataException or ArgumentException or IndexOutOfRangeException) { skipped++; continue; }
+            try
+            {
+                table.Package.Export = table.WriteExport();
+                var written = table.Package.Save();
+                if (written.AsSpan().SequenceEqual(original)) { identical++; continue; }
+                var reread = DataTable.Read(ZenPackage.Parse(written, path), path);
+                var same = reread.Entries.Count == table.Entries.Count
+                    && Enumerable.Range(0, table.Entries.Count).All(i => Row(table, i) == Row(reread, i) && table.NameText(table.Keys[i].Name) == reread.NameText(reread.Keys[i].Name));
+                if (same) { equivalent++; Console.WriteLine($"same rows, different bytes: {Path.GetRelativePath(folder, path)}"); }
+                else { failed++; Console.WriteLine($"FAILED: {Path.GetRelativePath(folder, path)}"); }
+            }
+            catch (Exception ex) { failed++; Console.WriteLine($"FAILED: {Path.GetRelativePath(folder, path)}: {ex.Message}"); }
+        }
+        Console.WriteLine($"{identical} byte-identical, {equivalent} with identical rows, {failed} failed, {skipped} skipped");
+        return failed == 0 ? 0 : 1;
+    }
+
+    static int Compare(string a, string b)
+    {
+        var left = DataTable.Load(a);
+        var right = DataTable.Load(b);
+        var differences = 0;
+        if (left.Entries.Count != right.Entries.Count) { Console.WriteLine($"row count {left.Entries.Count} vs {right.Entries.Count}"); differences++; }
+        for (var i = 0; i < Math.Min(left.Entries.Count, right.Entries.Count); i++)
+        {
+            var name = left.NameText(left.Keys[i].Name);
+            if (name != right.NameText(right.Keys[i].Name)) { Console.WriteLine($"row {i}: {name} vs {right.NameText(right.Keys[i].Name)}"); differences++; continue; }
+            if (Row(left, i) == Row(right, i)) continue;
+            differences++;
+            for (var p = 0; p < left.Properties.Count; p++)
+            {
+                string x = Format(left, left.Properties[p].Type, left.Entries[i][p]), y = Format(right, right.Properties[p].Type, right.Entries[i][p]);
+                if (x != y) Console.WriteLine($"{name}.{left.NameText(left.Properties[p].Name)}: '{x}' vs '{y}'");
+            }
+        }
+        Console.WriteLine(differences == 0 ? "same rows and values" : $"{differences} rows differ");
+        return differences == 0 ? 0 : 1;
     }
 }
 

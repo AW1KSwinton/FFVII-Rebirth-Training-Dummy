@@ -1,2 +1,0 @@
-c415409b230404951aa086350cb0d1156dbc3dc2 Release v0.0.1.0
-Source: https://github.com/Yoraiz0r/FF7RebirthDataObjectEditor (MIT). Files copied unmodified from the commit above: FF7Types/*.cs, IPropertyViewModel.cs, RowPropertiesViewModel.cs.

@@ -24,24 +24,65 @@ A simulator course is one row of `DataObject/Resident/Colosseum`. It names:
 
 The courses are data, so new ones need no Blueprint work.
 
-## 2. Adding rows to a DataObject table
+## 2. Reading and writing a DataObject table
 
-DataObject tables are UE4 "frozen" memory images, read and written with
-LordGregory's FF7R2 DataObject parser (the library behind Yoraiz0r's Data
-Object Editor). The parser can change values but not add rows. Our builder
-(`tools/DataBuilder`) adds them:
+`tools/DataBuilder` is our own reader and writer, with no third-party
+dependencies. It re-saves 1,725 of the game's DataObject tables byte for byte,
+and the other 5 with identical rows (`roundtrip`).
 
-- Rows live in a frozen `TMap<FName, int32>`: a dense array of keys
-  `{name, entry index, next key in bucket, bucket}`, a bucket array, then the
-  entries. A new row needs a key, an entry and a bucket link.
-- The bucket is UE4's FName hash: **CityHash64 of the lowercase name, plus the
-  FName number, masked to the bucket count**. This matched all 1,010 keys of
-  Colosseum, EnemyTerritory and BattleCharaSpec.
-- The parser keeps the original pointers to the bucket, property and entry
-  arrays, so the builder saves twice: once to lay the file out, then again
-  with those three pointers corrected.
-- Every build reloads the output and checks that each new row has the
-  requested values and every vanilla row is unchanged.
+**The package.** Each table is an IoStore ("zen") package with one export:
+- A 0x40-byte summary of section offsets.
+- The name map: each name is a 2-byte big-endian length header, then the
+  characters.
+- The CityHash64 name hashes, 8-aligned.
+- The import, export, bundle and graph tables.
+- The export.
+
+Adding a name appends it and its hash. The later offsets and the export's size
+change; nothing else does.
+
+**The export:**
+- Its tagged-property prefix ends in `None`, and holds the frozen image's size
+  at +0x0c.
+- The frozen memory image starts at +0x20.
+- After the image come 8 bytes, the name patch table, and 4 trailing bytes.
+
+**The frozen image.** Pointers are int64 `(relative offset << 1) | 1`.
+- A 0x58-byte header:
+  - the row keys, a `TSet<TPair<FName,int32>>` (key elements, allocation bits
+    and a bucket array);
+  - the property records (an FName and a type code, 12 bytes each);
+  - the entries, one struct per row.
+- The key elements: name, entry index, next key in the bucket, and bucket.
+- The bits, the buckets, the records and the entries, which are 8-aligned.
+- Finally, array and string contents, depth first. The image is padded to 16
+  bytes.
+
+**Rows.**
+- A row's fields follow the record order at natural alignment.
+- A property whose name ends in `_Array` is a `TArray` of its type.
+- Type codes: 1, 2 and 3 are 1 byte, 4 is 2 bytes, 6 and 7 are 4 bytes, 8 is
+  8 bytes, 9 is a float, 10 is a string (UTF-16, terminator counted) and 11 is
+  an FName.
+- Every FName is stored as zero and named by the patch table
+  `{name index, number, offsets}`.
+
+**Sharing.** The game's writer shares identical content: strings with the same
+characters, and arrays with the same bytes and names. String arrays are never
+shared, because their pointers make their bytes unique. The builder does the
+same.
+
+**New rows.** A new row needs a key, an entry and a bucket link. The bucket is
+UE4's FName hash: **CityHash64 of the lowercase name, plus the FName number,
+masked to the bucket count** (RoundUpToPowerOfTwo(Num / 2 + 8) buckets, rehashed
+when that count grows). Every build reloads its output and checks three things:
+each new row has the requested values, every vanilla row is unchanged, and every
+key is reachable from its bucket.
+
+The first version used LordGregory's FF7R2 DataObject parser. Its writer laid
+out rows by absolute address. After one new key pushed EnemyTerritoryLevel's
+entries off 8-byte alignment, that table's 1-byte fields landed 4 bytes from
+where the game's own layout puts them. The builder replaced it from v1.1.0.
 
 ## 3. Which tables tolerate new rows (tested live)
 
@@ -55,7 +96,7 @@ Object Editor). The parser can change values but not add rows. Our builder
 | EnemyTerritoryMob | 3 | rows load, but nothing spawns: a template must name an actor placed in the VR level |
 
 Re-saving EnemyTerritory or BattleCharaSpec without new rows is fine, so
-the parser isn't to blame. The game appears to expect fixed row counts in those
+the writer isn't to blame. The game appears to expect fixed row counts in those
 two tables. So the mod:
 
 - **repurposes** the one unused territory, `terVR_COL30_SUMMON_Gilgamesh_010_BtlTest_Hard`
@@ -135,8 +176,7 @@ Every 200 ms, on the game thread:
 
 ## Credits
 
-- FF7R2 DataObject parser — LordGregory (CC BY-NC 4.0, used as a NuGet package)
-- FF7 Rebirth Data Object Editor view models — Yoraiz0r (MIT, vendored)
+- LordGregory's FF7R2 DataObject parser and Yoraiz0r's FF7 Rebirth Data Object Editor, used to build v1.0.0
 - CityHash64 — Google (MIT, ported)
 - UE4SS, UnrealReZen, retoc, CUE4Parse and the OpenFF7R community
 - NSK01's VR Simulator Overhaul, for showing that the simulator is data-driven

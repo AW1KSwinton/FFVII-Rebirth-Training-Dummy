@@ -29,8 +29,7 @@ Plus DPS / HPS meters, and ideally dummies that don't move.
 | Tool | Used for |
 | --- | --- |
 | [FModel](https://fmodel.app) | Exporting the game's DataObject tables |
-| LordGregory's FF7R2 DataObject parser | Reading and writing those tables |
-| Yoraiz0r's FF7 Rebirth Data Object Editor | Its view models, to edit values safely |
+| LordGregory's FF7R2 DataObject parser, Yoraiz0r's Data Object Editor | Reading and writing those tables in v1.0.0 (replaced in v1.1.0, see step 10) |
 | UnrealReZen | Packing the IoStore pak (`.pak`/`.ucas`/`.utoc`) |
 | [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) v3 | Running Lua inside the game |
 | .NET 8, PowerShell, Python | The builder, the install script and the tests |
@@ -175,6 +174,29 @@ The builder writes the changed tables, UnrealReZen packs them into
 a 10-byte header that UnrealReZen doesn't write, so the build copies it from
 one of the game's own containers.
 
+## Step 10: replace the parser with our own
+
+v1.0.0 used LordGregory's parser, which is licensed for non-commercial use only. To let the mod (and
+the channel) earn anything, we replaced it with our own reader and writer, worked out from the
+game's files rather than from the parser's code:
+
+- **Decode the format.** We dumped the smallest table byte by byte and decoded it in stages: the
+  package summary and name map, the export's prefix, the frozen image's header, the key and
+  property records, then the rows. Pointers are relative offsets shifted left one bit. Names are
+  stored as zeros and filled in from a patch table at the end.
+- **Prove it on everything.** We prototyped a reader and writer in Python, re-saved every
+  DataObject table the game ships and compared the bytes. The first pass matched three tables.
+  Fixing signed pointers, a 1-byte type we had as 2 bytes, 16-byte padding and the game's rule for
+  sharing identical arrays and strings brought it to 1,689. The C# builder now re-saves 1,725
+  tables byte for byte. The other 5 reuse bytes from inside the key table for tiny arrays and come
+  back with identical rows.
+- **Check the mod's build.** Built with the new code, four of the five tables match the old build
+  row for row. The fifth, EnemyTerritoryLevel, showed that the old writer had pushed every row's
+  1-byte flags 4 bytes away from where the game's own layout puts them, because adding a row moved
+  the rows off 8-byte alignment. v1.1.0 fixes that.
+
+The builder now has no third-party dependencies and is MIT throughout.
+
 ## Known limits and next steps
 
 - **Tank stagger:** the Tank dummy can be pressured and staggered like any
@@ -189,8 +211,7 @@ one of the game's own containers.
 
 ## Credits
 
-- FF7R2 DataObject parser: LordGregory (CC BY-NC 4.0)
-- FF7 Rebirth Data Object Editor view models: Yoraiz0r (MIT)
+- LordGregory's FF7R2 DataObject parser and Yoraiz0r's FF7 Rebirth Data Object Editor, which v1.0.0 was built with
 - CityHash64: Google (MIT, ported)
 - UE4SS, UnrealReZen, FModel, CUE4Parse and the OpenFF7R community
 - NSK01's VR Simulator Overhaul, for showing the simulator is data-driven

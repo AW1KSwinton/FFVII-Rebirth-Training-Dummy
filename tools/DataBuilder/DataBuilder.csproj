@@ -9,9 +9,4 @@
     <RootNamespace>TrainingDummy.DataBuilder</RootNamespace>
   </PropertyGroup>
 
-  <ItemGroup>
-    <!-- LordGregory's FF7R2 DataObject parser/writer. -->
-    <PackageReference Include="FF7R2.DataObject.API" Version="1.2.0" />
-  </ItemGroup>
-
 </Project>
