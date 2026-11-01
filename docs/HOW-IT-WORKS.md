@@ -118,6 +118,10 @@ Every 200 ms, on the game thread:
 
 ## 6. Known limits
 
+- The Tank dummy can be pressured and staggered, and doesn't attack while
+  staggered. With a full party attacking (2026-11-01, Cloud, Aerith and Tifa
+  in Classic mode) it dealt no damage in 90 s; with Cloud alone it kept
+  landing hits (527 damage taken over about four minutes).
 - Overkill isn't measured (HP deltas stop at 0); per-hit hooks
   (`EndBattleSceneBlueprint:OnTakeDamage`) never fired in the simulator.
 - Course names come from the Lua mod; without it the three rows are blank.

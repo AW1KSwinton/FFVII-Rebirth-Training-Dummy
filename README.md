@@ -13,8 +13,11 @@ Adds three courses to Chadley's Combat Simulator, at the end of the list
 
 The dummy has 1,000,000 HP and refills, so even a 99,999 hit can't defeat it.
 F7 resets the meters and F8 hides them. Settings are in `ue4ss/TrainingDummy/Scripts/config.lua`.
-How it was made, what was tested and the limits:
-[docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
+
+- How to install and use it: [docs/GUIDE.md](docs/GUIDE.md).
+- How we built it, step by step: [docs/HOW-WE-BUILT-IT.md](docs/HOW-WE-BUILT-IT.md).
+- The design in reference form, what was tested and the limits:
+  [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 
 ## Install
 
