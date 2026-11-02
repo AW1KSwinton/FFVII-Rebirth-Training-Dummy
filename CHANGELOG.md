@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0 (2026-11-02)
+
+- **New look:** the meters are now a panel in the top left corner, drawn with the game's own HUD art, with
+  party bars and readable labels.
+- **Fix:** staggering the DPS dummy no longer leaves a growing blur in the centre of the screen, and stagger now
+  ends by itself. The Stop status holding the dummy is lifted while it's staggered, and returns afterwards.
+- **New:** F6 clears the dummy's stagger.
+- **New:** on the Tank course your HP refills, so you can keep practising guarding.
+- **New:** unlimited MP on all three courses, and the Healing panel shows MP spent and healing per MP.
+- **Fix:** the Healing dummy can be attacked, so attacks build ATB for your spells. It still can't be defeated.
+- **Change:** the whole party is now held at 1 HP on the Healing course, including the character you control, so
+  you can test healing yourself. `heal_patients = "others"` in `config.lua` gives the old behaviour.
+- **Fix:** the mod no longer risks a crash by setting up its game-thread callback during play.
+- The data pak is unchanged from 1.1.0.
+
 ## 1.1.0 (2026-11-01)
 
 - **Fix:** EnemyTerritoryLevel rows now keep the game's own layout. The 1.0.0 build pushed every row's

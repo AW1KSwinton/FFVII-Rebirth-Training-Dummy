@@ -52,7 +52,7 @@ left of the screen.
 | --- | --- | --- |
 | DPS | can't be defeated, stands still, never attacks | DPS (damage per second) |
 | Tank | can't be defeated, attacks you | DTPS (damage taken per second) per party member, and DPS |
-| Healing | can't be hurt, stands still, never attacks | HPS (healing per second) per party member |
+| Healing | can't be defeated, stands still, never attacks | HPS (healing per second) per party member |
 
 ### DPS
 
@@ -74,35 +74,30 @@ practise defence, go in alone and guard or dodge instead of attacking.
 
 ### Healing
 
-The dummy is harmless and can't be damaged. Every party member except the one
-you control is held at 1 HP. Heal them: the HP bar fills, the HPS meter counts
+The dummy is harmless, and you can attack it normally to build ATB for your
+spells. It refills like the DPS dummy. You need someone in the party with a
+healing spell. Your whole party, you included, is held at 1 HP. Heal anyone: the HP bar fills, the HPS meter counts
 the healing, and 1.5 seconds later the member drops back to 1 HP, ready for the
 next heal. Items can't be used in simulator fights, so heal with spells and
 abilities (Cure, Prayer, Chakra and so on).
 
 ## Reading the meters
 
-```text
-TRAINING DUMMY - Tank   42s   [F7 reset]
-DTPS 31  (5s: 54)  total 1,302  biggest 220
-   Cloud  870
-   Tifa  432
-DPS 405  (5s: 512)  total 17,010  biggest 2,377
-```
+The panel in the top left corner shows the course and how long you've been going. Below that:
 
-- The first number is the average since the first hit, heal or damage taken.
-- **5s** is the rate over the last 5 seconds.
-- **total** is everything since the start or the last reset.
-- **biggest** is the largest amount measured in one check. The mod checks
-  five times a second, so this is usually one hit, but hits landing together
-  are added up.
-- The names below DTPS and HPS show each party member's share.
+- **The large number** is the average per second since the first hit, heal or damage taken.
+- **Last 5 seconds** is the rate over the last 5 seconds.
+- **Total** is everything since the start or the last reset.
+- **MP spent** and **Healing per MP** (Healing course) show how efficient your healing is. MP refills as you
+  spend it on all three courses, so you never run out.
+- **Biggest** is the largest amount measured in one check. The mod checks five times a second, so
+  this is usually one hit, but hits landing together are added up.
+- **Party members** appear under damage taken and healing, each with a bar for their share.
 
-The timer starts at the first event, not when the battle loads, so the
-averages aren't dragged down by the intro.
 
 | Key | What it does |
 | --- | --- |
+| F6 | Clear the dummy's stagger, so you can practise building it again straight away |
 | F7 | Reset the meters (start a fresh attempt without leaving the fight) |
 | F8 | Hide or show the meters |
 
@@ -128,13 +123,15 @@ Don't use UE4SS hot reload (Ctrl+R): it crashes this game.
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `refill_below_percent` | 90 | Dummy HP percentage that triggers a refill to 100% |
-| `stop_dps_dummy` | true | Pin the DPS dummy in place |
-| `stop_heal_dummy` | true | Pin the Healing dummy in place |
-| `heal_patients` | `"others"` | `"others"`: everyone except you is held at 1 HP; `"all"`: you too |
+| `passive_dps_dummy` | true | The DPS dummy stands still and never attacks |
+| `passive_heal_dummy` | true | The Healing dummy stands still and never attacks |
+| `unlimited_mp` | true | Refill MP as it's spent, on all three courses |
+| `tank_refill_below_percent` | 50 | Tank course: refill a member's HP below this percentage (0 turns it off) |
+| `heal_patients` | `"all"` | `"all"`: the whole party is held at 1 HP. `"others"`: everyone except the character you control |
 | `heal_reset_seconds` | 1.5 | How long a healed member keeps their HP before dropping back |
 | `rolling_window_seconds` | 5 | Length of the "5s" rate |
-| `overlay`, `overlay_x`, `overlay_y` | on, 40, 220 | Show the meters, and where |
-| `reset_key`, `toggle_overlay_key` | F7, F8 | Keys |
+| `overlay`, `overlay_x`, `overlay_y` | on, 48, 48 | Show the meters, and where (1920x1080 units from the top left) |
+| `clear_stagger_key`, `reset_key`, `toggle_overlay_key` | F6, F7, F8 | Keys |
 | `write_json` | true | Write `meters.json` |
 | `debug` | false | Log what the mod sees to `UE4SS.log` |
 

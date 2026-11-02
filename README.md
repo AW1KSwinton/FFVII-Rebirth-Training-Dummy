@@ -7,12 +7,13 @@ Adds three courses to Chadley's Combat Simulator, at the end of the list
   never fights back. Shows your damage per second.
 - **Training Dummy: Tank**: a dummy that can't be defeated and fights back.
   Shows damage taken per second (DTPS) and DPS.
-- **Training Dummy: Healing**: a harmless dummy you can't hurt; your other
-  party members are held at 1 HP and dropped back after each heal. Shows
+- **Training Dummy: Healing**: a harmless dummy you can hit to build ATB; your whole
+  party is held at 1 HP and dropped back after each heal. Shows
   healing per second (HPS) per party member.
 
 The dummy has 1,000,000 HP and refills, so even a 99,999 hit can't defeat it.
-F7 resets the meters and F8 hides them. Settings are in `ue4ss/TrainingDummy/Scripts/config.lua`.
+The meters sit in a panel in the top left corner, drawn with the game's own HUD art.
+F6 clears the dummy's stagger, F7 resets the meters and F8 hides them. Settings are in `ue4ss/TrainingDummy/Scripts/config.lua`.
 
 - Download it: [Nexus Mods](https://www.nexusmods.com/finalfantasy7rebirth/mods/2474).
 - See it working, then how it was built: [the video](https://www.youtube.com/watch?v=ErkKRa1Sr4g).

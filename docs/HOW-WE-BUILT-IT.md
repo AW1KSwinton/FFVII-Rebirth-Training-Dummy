@@ -197,6 +197,34 @@ game's files rather than from the parser's code:
 
 The builder now has no third-party dependencies and is MIT throughout.
 
+## Step 11: make it look like the game, and fix what testing found
+
+The first meter was white text on the screen. The owner asked for something that matched the game, so we
+read the party panel's live widgets to find its sprites, fonts and colours. We wanted the game's own text
+and image widgets, but they draw nothing when created by a mod, even inside the game's own templates, and
+its font atlas couldn't be read. So the panel uses standard widgets with the game's real sprites, and
+the engine's Roboto for the text. It now sits in the top left corner.
+
+Then the owner played it by hand and found three things our automated tests hadn't:
+
+- **Blur that built up.** Staggering the DPS dummy left a blur in the centre of the screen, stronger after
+  every stagger. It only happened on the dummy held with a Stop status, because Stop froze the stagger
+  effect. Stop also meant stagger never ended.
+- **Healing with no ATB.** The Healing dummy couldn't be hit, so nothing built ATB for spells.
+- **Fatal errors.** The game kept crashing with an access violation.
+
+We first replaced Stop with the game's action restriction. The tests looked good, with no damage taken, but
+the owner could see the dummy still attacking: it just wasn't hitting anyone, so our measurement had fooled us.
+The answer was to keep Stop and lift it for exactly as long as the dummy is staggered. Now it stands still and
+never attacks, stagger ends by itself, and the blur is gone. The Healing dummy can be hit, so attacks build ATB.
+We also tried making the party immune to damage on that course, and found it blocked heals as well: Cloud's Cure
+spent its ATB and healed nothing, so that went too. A new key clears stagger on demand.
+
+The crash took the longest. The dump pointed at our own telemetry code, in a callback whose storage had moved
+while it was running. UE4SS adds a callback to a shared list the first time each mod runs code on the game
+thread, and doing that during play can move the list. Two of that day's crashes lined up with the first use of
+our own debugging tool. Every mod now makes that first call while it loads.
+
 ## Known limits and next steps
 
 - **Tank stagger:** the Tank dummy can be pressured and staggered like any

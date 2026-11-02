@@ -16,18 +16,20 @@
 local config = require("config")
 local Meters = require("meters")
 local course_text = require("course_text")
+local meter_view = require("meter_view")
 local overlay_ok, overlay = pcall(require, "overlay")
 
 local TAG = "[TrainingDummy] "
 local MAX_ENEMIES, MAX_PARTY = 32, 8
 local BATTLE_API = "/Script/EndGame.Default__EndBattleAPI"
+local STOP_STATUS = "BSC_Stop"
+local STATUS_TIME_INFINITY = 64 -- EEndBattleStatusChangeTimeType::Infinity
+local MENU_API = "/Script/EndGame.Default__EndMenuBPAPI"
 local PARTY_API = "/Script/EndGame.Default__EndPartyAPI"
 local STATICS = "/Script/Engine.Default__GameplayStatics"
 local ENEMY_AI_CLASS = "/Script/EndGame.EndAIControllerEnemyBase"
 -- An unused battle-test territory the data pak repurposes for the dummy.
 local TRAINING_TERRITORY = "terVR_COL30_SUMMON_Gilgamesh_010_BtlTest_Hard"
-local STOP_STATUS = "BSC_Stop"
-local STATUS_TIME_INFINITY = 64 -- EEndBattleStatusChangeTimeType::Infinity
 
 local meters = Meters.new(config.rolling_window_seconds)
 local state = {active = false, mode = nil, battle_id = nil, dummy_hp = nil, party = {}, logged = {},
@@ -206,10 +208,25 @@ local function set_hp_low(battle, actor)
     safe(function() battle:SetHPPercent(actor, 1) end)
 end
 
-local function keep_stopped(battle, actor)
+-- A passive dummy is held with an endless Stop, which keeps it still and stops it attacking. Stop also freezes
+-- stagger: it would never end, and each one would leave its screen effect running. So lift Stop for exactly as long
+-- as the dummy is staggered (it doesn't attack then anyway), and put it back afterwards.
+local function hold_passive(battle, dummy, passive)
     local stop = FName(STOP_STATUS)
-    if safe(function() return battle:HasStatusChangeID(actor, stop) end) ~= true then
-        safe(function() battle:AddStatusChangeID(actor, stop, STATUS_TIME_INFINITY, true, nil, true) end)
+    local staggered = safe(function() return battle:IsBurst(dummy) end) == true
+    local stopped = safe(function() return battle:HasStatusChangeID(dummy, stop) end) == true
+    if passive and not staggered and not stopped then
+        safe(function() battle:AddStatusChangeID(dummy, stop, STATUS_TIME_INFINITY, true, nil, true) end)
+    elseif stopped and (staggered or not passive) then
+        safe(function() battle:RemoveStatusChangeID(dummy, stop, false) end)
+    end
+    -- The clear key ends a stagger early, so a rotation can be tried again straight away.
+    if state.clear_stagger then
+        state.clear_stagger = false
+        if staggered then
+            safe(function() dummy.Controller:EndBurstInstant() end)
+            log("stagger cleared")
+        end
     end
 end
 
@@ -222,11 +239,11 @@ end
 local function begin(mode, battle, dummy)
     meters:reset()
     state.active, state.mode, state.party, state.dummy_hp = true, mode, {}, nil
+    state.clear_stagger = false
     state.battle_id = safe(function() return dummy:GetFullName() end)
     local cur, max = hp(battle, dummy)
     log(string.format("training battle started: mode=%s dummy=%s chara=%s hp=%s/%s", mode, name_of(dummy),
         tostring(safe(function() return battle:GetCharaID(dummy):ToString() end)), tostring(cur), tostring(max)))
-    if mode == "Heal" then safe(function() battle:SetDisableDamageHit(dummy, true) end) end
 end
 
 local function finish()
@@ -244,14 +261,28 @@ local function track_dummy(battle, dummy, now)
         cur = hp(battle, dummy) or cur
     end
     state.dummy_hp = cur
-    if (state.mode == "DPS" and config.stop_dps_dummy) or (state.mode == "Heal" and config.stop_heal_dummy) then
-        keep_stopped(battle, dummy)
-    end
+    hold_passive(battle, dummy, (state.mode == "DPS" and config.passive_dps_dummy)
+        or (state.mode == "Heal" and config.passive_heal_dummy))
 end
 
 -- EPlayerType order (EndDataBase).
 local PLAYER_NAMES = {[0] = "Cloud", "Barret", "Tifa", "Aerith", "Red XIII", "Yuffie", "Cait Sith", "Zack",
     "Sephiroth", "Vincent", "Cid"}
+
+-- Count what the member just spent, then fill their MP back up so they never run out.
+local function track_mp(member_id, kind, p, now)
+    local menu = cdo(MENU_API)
+    if not (menu and kind) then return end
+    local mp = number(safe(function() return menu:BPGetPlayerMP(kind) end))
+    local max = number(safe(function() return menu:BPGetPlayerMaxMP(kind) end))
+    if not (mp and max) then return end
+    if p.mp and mp < p.mp then meters:add("mp", p.mp - mp, now, member_id) end
+    if config.unlimited_mp and mp < max then
+        safe(function() menu:BPSetPlayerMP(kind, max) end)
+        mp = max
+    end
+    p.mp = mp
+end
 
 local function track_party(battle, party, now)
     -- The character the player controls: switching characters changes the leader.
@@ -269,7 +300,11 @@ local function track_party(battle, party, now)
             if not p then
                 p = {hp = cur}
                 state.party[id] = p
-                if patient then set_hp_low(battle, member); p.hp = hp(battle, member) or cur end
+                if patient then
+                    set_hp_low(battle, member)
+                    p.hp = hp(battle, member) or cur
+                    p.low = p.hp
+                end
             else
                 if cur < p.hp then meters:add("taken", p.hp - cur, now, id)
                 elseif cur > p.hp and patient then
@@ -277,38 +312,25 @@ local function track_party(battle, party, now)
                     p.reset_at = p.reset_at or (now + config.heal_reset_seconds)
                 end
                 p.hp = cur
+                track_mp(id, kind, p, now)
+                -- The Tank course is for measuring damage, so nobody dies. This isn't counted as healing.
+                if state.mode == "Tank" and cur < max * config.tank_refill_below_percent / 100 then
+                    safe(function() battle:SetHPPercent(member, 100) end)
+                    p.hp = hp(battle, member) or cur
+                end
+                -- Whoever you switch away from becomes a patient too.
+                if patient and not p.reset_at and (not p.low or cur > p.low) then
+                    p.reset_at = now + config.heal_reset_seconds
+                end
                 if patient and p.reset_at and now >= p.reset_at then
                     set_hp_low(battle, member)
                     p.hp, p.reset_at = hp(battle, member) or p.hp, nil
+                    p.low = p.hp
                 end
             end
         end
     end
     for id in pairs(state.party) do if not seen[id] then state.party[id] = nil end end
-end
-
-local function format_number(v)
-    v = math.floor((v or 0) + 0.5)
-    local s = tostring(v):reverse():gsub("(%d%d%d)", "%1,"):reverse()
-    return (s:gsub("^,", ""))
-end
-
-local LABELS = {damage = "DPS", taken = "DTPS", heal = "HPS"}
-local SHOWN = {DPS = {"damage"}, Tank = {"taken", "damage"}, Heal = {"heal"}}
-
-local function overlay_text(snapshot)
-    local lines = {string.format("TRAINING DUMMY - %s   %ds   [F7 reset]", state.mode, math.floor(snapshot.elapsed))}
-    for _, kind in ipairs(SHOWN[state.mode] or {}) do
-        local k = snapshot.kinds[kind]
-        lines[#lines + 1] = string.format("%s %s  (5s: %s)  total %s  biggest %s", LABELS[kind],
-            format_number(k.average), format_number(k.recent), format_number(k.total), format_number(k.biggest))
-        if kind ~= "damage" then
-            for source, amount in pairs(k.by_source) do
-                lines[#lines + 1] = string.format("   %s  %s", source, format_number(amount))
-            end
-        end
-    end
-    return table.concat(lines, "\n")
 end
 
 -- This mod's folder: UE4SS puts each mod's Scripts folder on package.path.
@@ -388,7 +410,7 @@ local function tick()
     if party then track_party(battle, party, now) end
 
     local snapshot = meters:snapshot(now)
-    if overlay_ok and overlay and state.overlay_visible then safe(overlay.show, overlay_text(snapshot), config, dummy) end
+    if overlay_ok and overlay and state.overlay_visible then safe(overlay.show, meter_view.build(snapshot, state.mode, config), config, dummy) end
     if config.write_json and now - state.last_json >= 0.5 then
         state.last_json = now
         safe(write_json, snapshot)
@@ -412,6 +434,9 @@ try_hook("/Script/EndGame.EndAIControllerBluePrintBase:OnTakeDamageInvoke", func
     return "damage=" .. tostring(safe(function() return damage:get() end))
 end)
 
+RegisterKeyBind(Key[config.clear_stagger_key], function()
+    state.clear_stagger = true
+end)
 RegisterKeyBind(Key[config.reset_key], function()
     meters:reset()
     log("meters reset")
@@ -421,13 +446,25 @@ RegisterKeyBind(Key[config.toggle_overlay_key], function()
     if not state.overlay_visible and overlay_ok and overlay then ExecuteInGameThread(function() safe(overlay.hide) end) end
 end)
 
+-- Register this mod's game-thread callback now, while mods load. UE4SS adds it to the process-event callback list
+-- on a mod's first ExecuteInGameThread; doing that during play can move the list under a running callback and crash.
+pcall(ExecuteInGameThread, function() end)
+
+-- Each ExecuteInGameThread allocates a Lua thread that UE4SS never forgets, so tick at full rate only when it matters.
+local IDLE_EVERY = 5
+local idle = 0
 LoopAsync(config.tick_ms, function()
     trace("scheduler", "async loop running")
-    ExecuteInGameThread(function()
-        trace("game_thread", "game-thread callback running")
-        local ok, err = pcall(tick)
-        if not ok then log_once("tick:" .. tostring(err), "tick error: " .. tostring(err)) end
-    end)
+    idle = idle + 1
+    -- Picking a course means a fight is close: the dummy must be held from its first moment.
+    if state.active or state.chosen_mode or course_text.has_work() or idle >= IDLE_EVERY then
+        idle = 0
+        ExecuteInGameThread(function()
+            trace("game_thread", "game-thread callback running")
+            local ok, err = pcall(tick)
+            if not ok then log_once("tick:" .. tostring(err), "tick error: " .. tostring(err)) end
+        end)
+    end
     return false
 end)
 

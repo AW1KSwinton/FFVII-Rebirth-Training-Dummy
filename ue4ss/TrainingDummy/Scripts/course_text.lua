@@ -16,13 +16,13 @@ M.NAMES = {
     },
     Tank = {
         title = "Training Dummy: Tank",
-        flavor = "A dummy that cannot be defeated but fights back. "
+        flavor = "A dummy that cannot be defeated but fights back, and your HP refills. "
             .. "Practise guarding and evading and watch the damage you take (DTPS). F7 resets the meter.",
     },
     Heal = {
         title = "Training Dummy: Healing",
-        flavor = "A harmless dummy you cannot hurt. Your other party members are held at 1 HP: "
-            .. "heal them and watch your healing per second (HPS). F7 resets the meter.",
+        flavor = "A dummy that can't be defeated and can't hurt you. Your whole party is held at 1 HP: "
+            .. "attack it to build ATB, heal them and watch your healing per second (HPS). F7 resets the meter.",
     },
 }
 
@@ -102,6 +102,11 @@ end
 
 -- One pass over the menu's own title fields, plus a throttled scan; the
 -- references are dropped after the last pass.
+-- True while the simulator menu has text waiting to be replaced.
+function M.has_work()
+    return pending.passes > 0
+end
+
 function M.apply()
     since_scan = since_scan + 1
     if pending.passes <= 0 then return end

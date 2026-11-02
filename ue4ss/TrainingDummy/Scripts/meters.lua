@@ -3,7 +3,7 @@
 local M = {}
 M.__index = M
 
--- Kinds: "damage" (dealt to a dummy), "taken" (by the party), "heal" (to a patient).
+-- Kinds: "damage" (dealt to a dummy), "taken" (by the party), "heal" (to a patient), "mp" (spent by the party).
 function M.new(window_seconds)
     return setmetatable({window = window_seconds or 5, events = {}, totals = {}, by_source = {},
         biggest = {}, started = nil, last = nil}, M)
@@ -57,7 +57,7 @@ end
 function M:snapshot(now)
     self:prune(now)
     local out = {elapsed = self.started and (now - self.started) or 0, kinds = {}}
-    for _, kind in ipairs({"damage", "taken", "heal"}) do
+    for _, kind in ipairs({"damage", "taken", "heal", "mp"}) do
         local avg, recent, total = self:rate(kind, now)
         out.kinds[kind] = {average = avg, recent = recent, total = total, biggest = self.biggest[kind] or 0,
             by_source = self.by_source[kind] or {}}

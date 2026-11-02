@@ -7,15 +7,22 @@ return {
     -- Kept high to leave a large HP margin between checks (5 per second).
     refill_below_percent = 90,
 
-    -- Pin the DPS and Healing dummies in place with an endless Stop status.
-    -- They still take hits and build stagger; the Tank dummy is never stopped.
-    stop_dps_dummy = true,
-    stop_heal_dummy = true,
+
+    -- Hold the DPS and Healing dummies still, so they don't attack. They still take hits, stagger and recover as
+    -- normal, and your attacks build ATB. The Tank dummy always fights back.
+    passive_dps_dummy = true,
+    passive_heal_dummy = true,
+
+    -- Everyone's MP is refilled as it's spent, on all three courses. MP spent is still counted.
+    unlimited_mp = true,
+
+    -- Tank course: a party member whose HP falls below this percentage is refilled, so nobody dies. 0 turns it off.
+    tank_refill_below_percent = 50,
 
     -- Healing course: which party members are patients held at 1 HP.
-    --   "others" = everyone except the character you control
     --   "all"    = the whole party, including you
-    heal_patients = "others",
+    --   "others" = everyone except the character you control
+    heal_patients = "all",
     -- Seconds a healed patient keeps its HP before being dropped back to 1 HP,
     -- so the heal is visible on the HP bar.
     heal_reset_seconds = 1.5,
@@ -23,12 +30,14 @@ return {
     -- Meters: rolling window for the "now" rate, in seconds.
     rolling_window_seconds = 5,
 
-    -- On-screen meter text (top left). Turn off to use only meters.json.
+    -- The on-screen meter panel. Turn off to use only meters.json.
+    -- Position in 1920x1080 units from the top left corner of the screen.
     overlay = true,
-    overlay_x = 40,
-    overlay_y = 220,
+    overlay_x = 48,
+    overlay_y = 48,
 
-    -- Keys: reset the meters, show or hide the overlay.
+    -- Keys: clear the dummy's stagger now, reset the meters, show or hide the overlay.
+    clear_stagger_key = "F6",
     reset_key = "F7",
     toggle_overlay_key = "F8",
 

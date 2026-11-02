@@ -128,12 +128,18 @@ Every 200 ms, on the game thread:
    `OnYesButtonPressed` reads the menu's `InfoWindow.Txt_CourseTitle`
    (`$menu_Colosseum_CourseTitle_COL99_TrainingDummy_<Mode>`).
 4. **Behaviour.**
-   - DPS: refill (`SetHPPercent(100)` below 90%) and an endless `BSC_Stop`
-     status (`AddStatusChangeID`, time type Infinity) — it still staggers.
+   - DPS: refill (`SetHPPercent(100)` below 90%) and an endless `BSC_Stop` status
+     (`AddStatusChangeID`, time type Infinity), which keeps it still and stops it attacking.
+     Stop also freezes stagger: up to v1.1.0 stagger never ended, and each one left its
+     screen effect running, so the centre of the screen blurred more with each stagger.
+     So while `IsBurst` is true the mod lifts Stop (`RemoveStatusChangeID`), and it puts
+     Stop back when stagger ends by itself. `SetForceActionRestriction` was tried and
+     doesn't stop the dummy attacking.
+   - F6: `dummy.Controller:EndBurstInstant()` ends a stagger early and resets the gauge.
    - Tank: refill only; it fights back.
-   - Heal: Stop + `SetDisableDamageHit`; party members other than the leader
-     (`EndPartyAPI:GetPartyLeaderType` vs `GetBattleMemberType`) are set to 1%
-     HP (`DebugSetHP` is compiled out of the retail game) and dropped back
+   - Heal: the same hold and refill as DPS, so attacks land and build ATB. (`SetDisableDamageHit`
+     on a party member also blocks heals, so it can't protect patients.) By default the whole party is set to 1%
+     HP (`heal_patients = "others"` spares the leader, from `EndPartyAPI:GetPartyLeaderType`) (`DebugSetHP` is compiled out of the retail game) and dropped back
      1.5 s after each heal.
 5. **Course names.** The courses use their own text keys, which aren't in the
    game's text table (`Text/US/Resident_TxtRes`, a file other mods replace
@@ -143,7 +149,11 @@ Every 200 ms, on the game thread:
    rows and description through a throttled `FindAllOf("EndTextBlock")` that
    only touches blocks showing one of our keys
    (`UUserWidget:GetWidgetFromName` isn't exposed in this game).
-6. **Meters.** HP deltas: dummy HP lost = damage dealt, party HP lost = damage
+6. **Tank HP.** Below `tank_refill_below_percent` a member is refilled with `SetHPPercent(100)`, so nobody
+   dies while practising guarding. The refill isn't counted as healing or damage.
+7. **MP.** `EndMenuBPAPI:BPGetPlayerMP` shows what each member just spent, which is counted, and
+   `BPSetPlayerMP` fills it back up, so MP never runs out on any course.
+8. **Meters.** HP deltas: dummy HP lost = damage dealt, party HP lost = damage
    taken, patient HP gained = healing. Average since the first event and a
    5 s rolling rate; written to `meters.json` and drawn in-game by a UMG
    widget built at runtime (CanvasPanel + TextBlock, `AddToViewport`).
@@ -152,7 +162,7 @@ Every 200 ms, on the game thread:
 
 | Course | Party | Result |
 | --- | --- | --- |
-| DPS | Cloud | dummy spawns with 1,000,000 HP; Cloud's hits land at the same 38–39 as at level 50; staggers while stopped |
+| DPS | Cloud | dummy spawns with 1,000,000 HP; Cloud's hits land at the same 38–39 as at level 50; staggers and recovers by itself (12 to 25 s measured) |
 | DPS (earlier build, 4,558 HP) | Cloud | 4,811 damage dealt, still standing — the refill works |
 | Heal | Cloud (leader), Red XIII, Tifa | patients at 11–13 HP; Cure healed Tifa 397, HPS shown, reset to 1% |
 | Tank | Cloud | 218 damage taken (DTPS) and 1,491 dealt in 55 s; dummy attacks normally |
@@ -173,6 +183,22 @@ Every 200 ms, on the game thread:
   ColosseumPositionData / EnemyParameter assets, like every simulator mod; it conflicts with
   VR Simulator Overhaul unless merged.
 - UE4SS hot reload (Ctrl+R) crashed the game; restart after editing the Lua.
+
+## The meter panel
+
+The panel is plain UMG (`Image` and `TextBlock`) built at runtime, using the game's own sprites from
+`/Game/Menu/Resident/Texture/`. The text is the engine's Roboto. The game's `EndTextBlock` and `EndImage`
+draw nothing when created at runtime, even inside the game's own widget templates, and its bitmap fonts
+only work with those. `meter_view.lua` turns the meters into a plain table, tested offline, and
+`overlay.lua` draws it, touching a widget only when something changed.
+
+## A UE4SS crash to avoid
+
+UE4SS adds a process-event callback on each mod's first `ExecuteInGameThread`. If that happens during
+play, the callback list can move in memory under a callback that is still running, and the game crashes
+(`EXCEPTION_ACCESS_VIOLATION`). So this mod makes that first call while it loads. It also ticks at full rate
+only during a course or while the menu has text to replace, because each `ExecuteInGameThread` allocates a
+Lua thread that UE4SS never forgets.
 
 ## Credits
 
